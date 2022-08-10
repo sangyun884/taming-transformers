@@ -2,9 +2,10 @@ import os
 import numpy as np
 import albumentations
 from torch.utils.data import Dataset
-
+from PIL import Image
 from taming.data.base import ImagePaths, NumpyPaths, ConcatDatasetWithIndex
-
+import torch
+import torch.nn.functional as F
 
 class FacesBase(Dataset):
     def __init__(self, *args, **kwargs):
@@ -48,8 +49,40 @@ class CelebAHQValidation(FacesBase):
         self.keys = keys
 
 class CelebAHQMask(Dataset):
-    def __init__(self, size):
+    def __init__(self, size, indices_dir, im_dir, seg_dir):
         super().__init__()
+        self.size = size
+        self.dir = indices_dir
+        self.im_dir = im_dir
+        self.seg_dir = seg_dir
+        self.im_names = []
+        with open(indices_dir, "r") as f:
+            self.im_names = f.read().splitlines()
+        self.label_list = ['skin', 'nose', 'eye_g', 'l_eye', 'r_eye', 'l_brow', 'r_brow', 'l_ear', 'r_ear', 'mouth', 'u_lip', 'l_lip', 'hair', 'hat', 'ear_r', 'neck_l', 'neck', 'cloth']
+    def __getitem__(self, i):
+        im_name = self.im_names[i]
+        num = im_name.split('.')[0]
+        img = Image.open(os.path.join(self.im_dir, im_name))
+        img = img.resize((self.size, self.size), Image.BILINEAR)
+        img = np.array(img)
+        img = img / 127.5 - 1.0
+
+        seg = torch.zeros(img.shape[0], img.shape[1])
+        for idx, c in enumerate(self.label_list):
+            c_name = f"{num}_{c}.png"
+            if not os.path.exists(os.path.join(self.seg_dir, c_name)):
+                continue
+            c_img = Image.open(os.path.join(self.seg_dir, c_name)).convert('L').resize((self.size, self.size), Image.NEAREST)
+            c_np = np.array(c_img)
+            seg[c_np != 0] = idx + 1
+        seg = F.one_hot(seg.type(torch.long), num_classes=len(self.label_list) + 1).float()
+        seg = seg.permute(2, 0, 1)
+
+        return {'image': img, 'seg': seg}
+    def __len__(self):
+        return len(self.im_names)
+        
+
 class FFHQTrain(FacesBase):
     def __init__(self, size, keys=None):
         super().__init__()

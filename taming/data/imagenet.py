@@ -10,7 +10,8 @@ from torch.utils.data import Dataset
 from taming.data.base import ImagePaths
 from taming.util import download, retrieve
 import taming.data.utils as bdu
-
+import torch
+import torch.nn.functional as F
 
 def give_synsets_from_indices(indices, path_to_yaml="data/imagenet_idx_to_synset.yaml"):
     synsets = []
@@ -556,3 +557,36 @@ class ImageNetEdgesTrain(ImageNetEdges):
 class ImageNetEdgesValidation(ImageNetEdges):
     def get_base(self):
         return ImageNetValidation()
+
+class ImageNetSeg(Dataset):
+    def __init__(self, size, indices, num_classes):
+        super().__init__()
+        self.size = size
+        self.indices = indices
+        self.num_classes = num_classes
+        with open(indices, "r") as f:
+            self.im_list = f.readlines()
+        
+    def __imdir2segdir(self, imdir):
+        return imdir.replace("validation", "validation-segmentation").replace("JPEG", "png")
+    def __getitem__(self, i):
+        im_path = self.im_list[i].strip()
+        img = Image.open(im_path).convert('RGB')
+        img = img.resize((self.size, self.size), Image.BILINEAR)
+        img = np.array(img)
+        img = img / 127.5 - 1.0
+
+        seg_path = self.__imdir2segdir(im_path)
+        seg = Image.open(seg_path)
+        seg = seg.resize((self.size, self.size), Image.NEAREST)
+        seg = np.array(seg)
+        seg = seg[:, :, 1] * 256 + seg[:, :, 0]
+        seg = torch.from_numpy(seg.astype(np.float))
+        seg[seg == 1000] = 0
+        seg = F.one_hot(seg.type(torch.long), self.num_classes).float()
+        seg = seg.permute(2,0,1)
+        return {"image": img, "seg": seg}
+    def __len__(self):
+        return len(self.im_list)
+
+        
