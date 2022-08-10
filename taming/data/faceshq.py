@@ -47,7 +47,9 @@ class CelebAHQValidation(FacesBase):
         self.data = NumpyPaths(paths=paths, size=size, random_crop=False)
         self.keys = keys
 
-
+class CelebAHQMask(Dataset):
+    def __init__(self, size):
+        super().__init__()
 class FFHQTrain(FacesBase):
     def __init__(self, size, keys=None):
         super().__init__()
