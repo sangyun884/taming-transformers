@@ -58,6 +58,9 @@ class CelebAHQMask(Dataset):
         self.im_names = []
         with open(indices_dir, "r") as f:
             self.im_names = f.read().splitlines()
+        # if len(self.im_names) < 100:
+        #     self.im_names = self.im_names * 10
+        self.im_names = self.im_names * 10
         self.label_list = ['skin', 'nose', 'eye_g', 'l_eye', 'r_eye', 'l_brow', 'r_brow', 'l_ear', 'r_ear', 'mouth', 'u_lip', 'l_lip', 'hair', 'hat', 'ear_r', 'neck_l', 'neck', 'cloth']
     def __getitem__(self, i):
         im_name = self.im_names[i]

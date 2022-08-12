@@ -12,6 +12,7 @@ from taming.util import download, retrieve
 import taming.data.utils as bdu
 import torch
 import torch.nn.functional as F
+import torchvision.transforms.functional as TF
 
 def give_synsets_from_indices(indices, path_to_yaml="data/imagenet_idx_to_synset.yaml"):
     synsets = []
@@ -559,14 +560,15 @@ class ImageNetEdgesValidation(ImageNetEdges):
         return ImageNetValidation()
 
 class ImageNetSeg(Dataset):
-    def __init__(self, size, indices, num_classes):
+    def __init__(self, size, indices, num_classes, aug = False):
         super().__init__()
         self.size = size
         self.indices = indices
         self.num_classes = num_classes
+        self.aug = aug
         with open(indices, "r") as f:
             self.im_list = f.readlines()
-        
+        self.im_list = self.im_list * 10
     def __imdir2segdir(self, imdir):
         return imdir.replace("validation", "validation-segmentation").replace("JPEG", "png")
     def __getitem__(self, i):
@@ -585,6 +587,13 @@ class ImageNetSeg(Dataset):
         seg[seg == 1000] = 0
         seg = F.one_hot(seg.type(torch.long), self.num_classes).float()
         seg = seg.permute(2,0,1)
+
+        if self.aug:
+            # Witih a probability of 0.5
+            if np.random.rand() < 0.5:
+                # Flip horizontally
+                img = img[:, ::-1, :].copy()
+                seg = TF.hflip(seg)
         return {"image": img, "seg": seg}
     def __len__(self):
         return len(self.im_list)
