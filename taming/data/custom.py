@@ -6,6 +6,9 @@ import glob
 from taming.data.base import ImagePaths, NumpyPaths, ConcatDatasetWithIndex
 from PIL import Image
 import torch.nn.functional as F
+import torchvision.transforms.functional as TF
+from torchvision import transforms
+
 import torch
 
 class CustomBase(Dataset):
@@ -45,7 +48,8 @@ class SmallDatasetSeg(Dataset):
     # For more information, refer to https://github.com/yandex-research/ddpm-segmentation.
     def __init__(self, dir, num_classes, mul_length = 1):
         super().__init__()
-        im_names = glob.glob(os.path.join(dir, "*.png")) + glob.glob(os.path.join(dir, "*.jpg")) * mul_length
+        im_names_original = glob.glob(os.path.join(dir, "*.png")) + glob.glob(os.path.join(dir, "*.jpg"))
+        im_names = im_names_original * mul_length
         im_names.sort()
         seg_names = [im_name.replace(".png", ".npy").replace(".jpg", ".npy") for im_name in im_names]
 
@@ -71,3 +75,68 @@ class SmallDatasetSeg(Dataset):
     def __len__(self):
         return len(self.im_names)
         
+class CelebAwithPatches(Dataset):
+    def __init__(self, size, indices_dir, im_dir):
+        super().__init__()
+        with open(indices_dir, "r") as f:
+            self.fnames = f.read().splitlines()
+        self.fnames.sort()
+        self.dir_dset = im_dir
+        self.size = size
+
+        # self.rand_perspective = transforms.RandomPerspective(distortion_scale=0.4, p=0.5)
+    
+    def __getitem__(self, i):
+        fname = self.fnames[i]
+        img = Image.open(os.path.join(self.dir_dset, fname))
+        img = img.resize((self.size, self.size))
+        patches = self.__extract_patches_from_image(img)
+        img = np.array(img)
+        img = img / 127.5 - 1.0
+        # print(f"self_patches: {patches}")
+        return {'image': img, 'self_patches': patches}
+    def __len__(self):
+        return len(self.fnames)
+    def __extract_patches_from_image(self, img):
+        img = TF.to_tensor(img)
+        # size_min = self.size // 4
+        # size_max = self.size // 2
+        # size_patch = (size_min + size_max) // 2
+        size_max = self.size - 1
+        size_min = size_max - 1
+        size_patch = 224
+        patch_num = 5
+        patches = []
+        for i in range(patch_num):
+            width = np.random.randint(size_min, size_max)
+            height = np.random.randint(size_min, size_max)
+            x = np.random.randint(0, self.size - width)
+            y = np.random.randint(0, self.size - height)
+            patch = img[:, y:y+height, x:x+width]
+            patch = F.interpolate(patch.unsqueeze(0), size=(size_patch, size_patch), mode='bilinear', align_corners=True)
+            # patch = self.__patch_augmentation(patch)
+            patches.append(patch)
+        patches = torch.cat(patches, dim=0)
+        return patches
+    def __patch_augmentation(self, patch):
+        p = 0.5
+        # Geometric augmentation
+        if np.random.rand() > p:
+            patch = TF.hflip(patch)
+        if np.random.rand() > p:
+            patch = TF.vflip(patch)
+        # patch = self.rand_perspective(patch)
+        # if np.random.rand() > p:
+        #     angle = np.random.randint(-10, 10)
+        #     patch = TF.rotate(patch, angle=angle)
+        # Color augmentation
+        # if np.random.rand() > p:
+        #     patch = TF.adjust_brightness(patch, np.random.randint(0.95, 1.05))
+        # if np.random.rand() > p:
+        #     patch = TF.adjust_contrast(patch, np.random.randint(0.95, 1.05))
+        # if np.random.rand() > p:
+        #     patch = TF.adjust_saturation(patch, np.random.randint(0.95, 1.05))
+        
+        return patch
+        
+    
