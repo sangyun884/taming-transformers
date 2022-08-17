@@ -76,13 +76,22 @@ class SmallDatasetSeg(Dataset):
         return len(self.im_names)
         
 class CelebAwithPatches(Dataset):
-    def __init__(self, size, indices_dir, im_dir):
+    def __init__(self, size, patch_size, indices_dir, im_dir, patch_num):
+        # size: image size
+        # patch_size: the size of patches that will be extracted from the image
+        # indices_dir: the directory that contains the indices of the images
+        # im_dir: the directory that contains the images. The images will be loaded from im_dir/indices_dir/
+        # patch_num: the number of patches that will be extracted from the image
+
         super().__init__()
         with open(indices_dir, "r") as f:
             self.fnames = f.read().splitlines()
         self.fnames.sort()
         self.dir_dset = im_dir
         self.size = size
+        self.patch_size = patch_size
+        self.patch_num = patch_num
+        assert patch_size < size, f"Patch size should be smaller than image size, but got {patch_size} and {size}"
 
         # self.rand_perspective = transforms.RandomPerspective(distortion_scale=0.4, p=0.5)
     
@@ -97,24 +106,23 @@ class CelebAwithPatches(Dataset):
         return {'image': img, 'self_patches': patches}
     def __len__(self):
         return len(self.fnames)
-    def __extract_patches_from_image(self, img):
+    def __extract_patches_from_image(self, img, aug = True):
+        # TODO: extract non-overlapping patches from the image
+        # Hint: use torch.nn.functional.grid_sample
+
         img = TF.to_tensor(img)
-        # size_min = self.size // 4
-        # size_max = self.size // 2
-        # size_patch = (size_min + size_max) // 2
-        size_max = self.size - 1
-        size_min = size_max - 1
-        size_patch = 224
-        patch_num = 5
+        size_max = min(self.patch_size * 1.3, self.size - 1)
+        size_min = self.patch_size * 0.7
         patches = []
-        for i in range(patch_num):
+        for i in range(self.patch_num):
             width = np.random.randint(size_min, size_max)
             height = np.random.randint(size_min, size_max)
             x = np.random.randint(0, self.size - width)
             y = np.random.randint(0, self.size - height)
             patch = img[:, y:y+height, x:x+width]
-            patch = F.interpolate(patch.unsqueeze(0), size=(size_patch, size_patch), mode='bilinear', align_corners=True)
-            # patch = self.__patch_augmentation(patch)
+            patch = F.interpolate(patch.unsqueeze(0), size=(self.patch_size, self.patch_size), mode='bicubic')
+            if aug:
+                patch = self.__patch_augmentation(patch)
             patches.append(patch)
         patches = torch.cat(patches, dim=0)
         return patches
@@ -140,3 +148,26 @@ class CelebAwithPatches(Dataset):
         return patch
         
     
+class CelebAwithPatchesVal(CelebAwithPatches):
+    # Same as CelebAwithPatches, but now we mix the patches from an image with patches from another image (sample_patches)
+    def __init__(self, size, patch_size, indices_dir, im_dir, patch_num, sample_patch_indice):
+        # sample_patch_indice: .txt file that contains the absolute paths to the sample patches
+        super().__init__(size, patch_size, indices_dir, im_dir, patch_num)
+        with open(sample_patch_indice, "r") as f:
+            self.sample_patch_dirs = f.read().splitlines()
+        if len(self.sample_patch_dirs) > patch_num:
+            raise ValueError(f"{len(self.sample_patch_dirs)} is larger than {patch_num}")
+        sample_patch_list = []
+        for patch_dir in self.sample_patch_dirs:
+            patch = Image.open(patch_dir)
+            patch = TF.to_tensor(patch)
+            patch = F.interpolate(patch.unsqueeze(0), size=(self.patch_size, self.patch_size), mode='bicubic').squeeze(0)
+            sample_patch_list.append(patch)
+        self.sample_patch_list = sample_patch_list
+    def __getitem__(self, i):
+        out = super().__getitem__(i)
+        patches = out['self_patches']
+        for i, sample_patch in enumerate(self.sample_patch_list):
+            patches[i] = sample_patch
+        out["self_patches"] = patches
+        return out
