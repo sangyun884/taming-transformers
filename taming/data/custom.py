@@ -10,7 +10,7 @@ import torchvision.transforms.functional as TF
 import torch
 import h5py
 import cv2
-
+from torchvision.utils import save_image
 class CustomBase(Dataset):
     def __init__(self, *args, **kwargs):
         super().__init__()
@@ -194,11 +194,10 @@ class CelebAwithPatchesVal(CelebAwithPatches):
         return out
 
 class ArtBenchWithPatches(Dataset):
-    def __init__(self, patch_size, im_dir, patch_num):
+    def __init__(self, patch_size, im_dir):
         size = 256
         # patch_size: the size of patches that will be extracted from the image
         # im_dir: the directory that contains images.
-        # patch_num: the number of patches that will be extracted from the image
 
         super().__init__()
         self.im_list = []
@@ -208,7 +207,6 @@ class ArtBenchWithPatches(Dataset):
                     self.im_list.append(os.path.join(root, f))
         self.size = size
         self.patch_size = patch_size
-        self.patch_num = patch_num
         assert patch_size < size, f"Patch size should be smaller than image size, but got {patch_size} and {size}"
 
         # self.rand_perspective = transforms.RandomPerspective(distortion_scale=0.4, p=0.5)
@@ -219,30 +217,53 @@ class ArtBenchWithPatches(Dataset):
         patches = self.__extract_patches_from_image(img)
         img = np.array(img)
         img = img / 127.5 - 1.0
-        # print(f"self_patches: {patches}")
+        patches = (patches - 0.5) / 0.5
         return {'image': img, 'self_patches': patches}
     def __len__(self):
         return len(self.im_list)
     def __extract_patches_from_image(self, img,):
+        patch_num = np.random.randint(1, 16)
         img = TF.to_tensor(img)
         patches = []
         _, h, w = img.shape
         x, y = 0, 0
-        delta_x = w // 3
-        delta_y = h // 3
-        while x + delta_x < w:
-            while y + delta_y < h:
+        delta_x_list = self._divide_range_into_intervals(start = x, end = w, num = 4)
+        delta_y_list = self._divide_range_into_intervals(start = y, end = h, num = 4)
+        for delta_x in delta_x_list: 
+            for delta_y in delta_y_list:
                 patch = img[:, y:y+delta_y, x:x+delta_x]
                 patch = F.interpolate(patch.unsqueeze(0), size=self.patch_size, mode='bicubic')
-                # patch = self.__patch_augmentation(patch)
+                patch = self._patch_augmentation(patch)
                 patches.append(patch)
                 y += delta_y
             x += delta_x
             y = 0
         np.random.shuffle(patches)
-        patches = patches[:self.patch_num]
+        patches = patches[:patch_num]
         patches = torch.cat(patches, dim=0)
         return patches
+    def _divide_range_into_intervals(self, start, end, num):
+        """
+        Divide the range [start, end] into num intervals.
+        Return: a list of intervals.
+        """
+
+
+        delta_min = (end - start) / num / 2
+        delta_list = []
+        for i in range(num - 1):
+            delta_max = (end - start) / (num - i + 1) * 2
+            delta = np.random.randint(delta_min, delta_max)
+            delta_list.append(delta)
+            start += delta
+        delta_list.append(end - start)
+        return delta_list
+    def _patch_augmentation(self, patch):
+        p = 0.5
+        if np.random.rand() > p:
+            patch = TF.rotate(patch, angle=np.random.randint(-10, 10))        
+        return patch
+  
 
 class NYUv2Depth(Dataset):
     f = None
