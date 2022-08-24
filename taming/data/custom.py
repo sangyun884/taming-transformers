@@ -7,9 +7,9 @@ from taming.data.base import ImagePaths, NumpyPaths, ConcatDatasetWithIndex
 from PIL import Image
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
-from torchvision import transforms
-
 import torch
+import h5py
+import cv2
 
 class CustomBase(Dataset):
     def __init__(self, *args, **kwargs):
@@ -106,7 +106,28 @@ class CelebAwithPatches(Dataset):
         return {'image': img, 'self_patches': patches}
     def __len__(self):
         return len(self.fnames)
-    def __extract_patches_from_image(self, img, aug = True):
+    def __extract_patches_from_image(self, img,):
+        img = TF.to_tensor(img)
+        patches = []
+        _, h, w = img.shape
+        x, y = 0, 0
+        delta_x = w // 3
+        delta_y = h // 3
+        while x + delta_x < w:
+            while y + delta_y < h:
+                patch = img[:, y:y+delta_y, x:x+delta_x]
+                patch = F.interpolate(patch.unsqueeze(0), size=self.patch_size, mode='bicubic')
+                # patch = self.__patch_augmentation(patch)
+                patches.append(patch)
+                y += delta_y
+            x += delta_x
+            y = 0
+        np.random.shuffle(patches)
+        patches = patches[:self.patch_num]
+        patches = torch.cat(patches, dim=0)
+        return patches
+        
+    def __extract_patches_from_image_crop(self, img, aug = True):
         # TODO: extract non-overlapping patches from the image
         # Hint: use torch.nn.functional.grid_sample
 
@@ -171,3 +192,111 @@ class CelebAwithPatchesVal(CelebAwithPatches):
             patches[i] = sample_patch
         out["self_patches"] = patches
         return out
+
+class ArtBenchWithPatches(Dataset):
+    def __init__(self, patch_size, im_dir, patch_num):
+        size = 256
+        # patch_size: the size of patches that will be extracted from the image
+        # im_dir: the directory that contains images.
+        # patch_num: the number of patches that will be extracted from the image
+
+        super().__init__()
+        self.im_list = []
+        for root, dirs, files in os.walk(im_dir):
+            for f in files:
+                if f.endswith(".jpg") or f.endswith(".png"):
+                    self.im_list.append(os.path.join(root, f))
+        self.size = size
+        self.patch_size = patch_size
+        self.patch_num = patch_num
+        assert patch_size < size, f"Patch size should be smaller than image size, but got {patch_size} and {size}"
+
+        # self.rand_perspective = transforms.RandomPerspective(distortion_scale=0.4, p=0.5)
+    
+    def __getitem__(self, i):
+        img = Image.open(self.im_list[i])
+        assert img.size == (self.size, self.size), f"{img.size} is not equal to {self.size}"
+        patches = self.__extract_patches_from_image(img)
+        img = np.array(img)
+        img = img / 127.5 - 1.0
+        # print(f"self_patches: {patches}")
+        return {'image': img, 'self_patches': patches}
+    def __len__(self):
+        return len(self.im_list)
+    def __extract_patches_from_image(self, img,):
+        img = TF.to_tensor(img)
+        patches = []
+        _, h, w = img.shape
+        x, y = 0, 0
+        delta_x = w // 3
+        delta_y = h // 3
+        while x + delta_x < w:
+            while y + delta_y < h:
+                patch = img[:, y:y+delta_y, x:x+delta_x]
+                patch = F.interpolate(patch.unsqueeze(0), size=self.patch_size, mode='bicubic')
+                # patch = self.__patch_augmentation(patch)
+                patches.append(patch)
+                y += delta_y
+            x += delta_x
+            y = 0
+        np.random.shuffle(patches)
+        patches = patches[:self.patch_num]
+        patches = torch.cat(patches, dim=0)
+        return patches
+
+class NYUv2Depth(Dataset):
+    f = None
+    def __init__(self, dir, size = 256, train=True):
+        # dir: path to .mat file
+        super().__init__()
+        if NYUv2Depth.f is None:
+            print(f"Loading {dir}")
+            NYUv2Depth.f = h5py.File(dir) 
+        self.images = NYUv2Depth.f['images']
+        self.depths = NYUv2Depth.f['depths']
+        self.size = size
+        if train:
+            self.images = self.images[:1200]
+            self.depths = self.depths[:1200]
+        else:
+            self.images = self.images[1200:]
+            self.depths = self.depths[1200:]
+
+    def __getitem__(self, i):
+        # read i-th image. original format is [3 x 640 x 480], uint8
+        img = self.images[i]
+
+        # reshape
+        img_ = np.empty([480, 640, 3])
+        img_[:,:,0] = img[0,:,:].T
+        img_[:,:,1] = img[1,:,:].T
+        img_[:,:,2] = img[2,:,:].T
+
+        # imshow
+        img = img_.astype('float32') / 127.5 - 1.0
+
+
+        depth = torch.tensor(self.depths[i].astype(np.float32).T).unsqueeze(0)
+
+        # Random crop into square
+        h, w = depth.shape[1], depth.shape[2]
+        if h > w:
+            crop_size = w
+            top = np.random.randint(0, h - crop_size)
+            left = 0
+        else:
+            crop_size = h
+            top = 0
+            left = np.random.randint(0, w - crop_size)
+        depth_cropped = depth[:, top:top+crop_size, left:left+crop_size]
+        img_cropped = img[top:top+crop_size, left:left+crop_size, :]
+        
+        # Resize
+        depth_resized = F.interpolate(depth_cropped.unsqueeze(0), size=(self.size, self.size), mode='bilinear').squeeze(0)
+        img_resized = cv2.resize(img_cropped, (self.size, self.size))
+
+        depth_resized = (depth_resized - 3) / 3
+        
+        return {'image': img_resized, 'seg': depth_resized}
+    def __len__(self):
+        return len(self.images)
