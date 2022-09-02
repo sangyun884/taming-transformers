@@ -278,7 +278,9 @@ class NYUv2Depth(Dataset):
         self.size = size
         if train:
             self.images = self.images[:1200]
+            self.images = np.repeat(self.images, 9, axis=0)
             self.depths = self.depths[:1200]
+            self.depths = np.repeat(self.depths, 9, axis=0)
         else:
             self.images = self.images[1200:]
             self.depths = self.depths[1200:]
@@ -316,7 +318,8 @@ class NYUv2Depth(Dataset):
         depth_resized = F.interpolate(depth_cropped.unsqueeze(0), size=(self.size, self.size), mode='bilinear').squeeze(0)
         img_resized = cv2.resize(img_cropped, (self.size, self.size))
 
-        depth_resized = (depth_resized - 3) / 3
+        depth_resized = depth_resized / 10 # normalize into [0, 1]
+        depth_resized = (depth_resized - 0.5) / 0.5 # normalize into [-1, 1]
         
         return {'image': img_resized, 'seg': depth_resized}
     def __len__(self):
