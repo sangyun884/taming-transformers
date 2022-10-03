@@ -6,6 +6,7 @@ from PIL import Image
 from taming.data.base import ImagePaths, NumpyPaths, ConcatDatasetWithIndex
 import torch
 import torch.nn.functional as F
+import glob
 
 class FacesBase(Dataset):
     def __init__(self, *args, **kwargs):
@@ -30,10 +31,13 @@ class FacesBase(Dataset):
 class CelebAHQTrain(FacesBase):
     def __init__(self, size, keys=None):
         super().__init__()
-        root = "data/celebahq"
-        with open("data/celebahqtrain.txt", "r") as f:
-            relpaths = f.read().splitlines()
-        paths = [os.path.join(root, relpath) for relpath in relpaths]
+        
+        root = "/home/sangyunlee/datasets/CelebAMask-HQ/CelebAMask-HQ/256/train"
+        # with open("data/celebahqvalidation.txt", "r") as f:
+        #     relpaths = f.read().splitlines()
+        # paths = [os.path.join(root, relpath) for relpath in relpaths]
+        paths = glob.glob(os.path.join(root, "*.jpg")) + glob.glob(os.path.join(root, "*.png"))
+        
         self.data = NumpyPaths(paths=paths, size=size, random_crop=False)
         self.keys = keys
 
@@ -41,10 +45,11 @@ class CelebAHQTrain(FacesBase):
 class CelebAHQValidation(FacesBase):
     def __init__(self, size, keys=None):
         super().__init__()
-        root = "data/celebahq"
-        with open("data/celebahqvalidation.txt", "r") as f:
-            relpaths = f.read().splitlines()
-        paths = [os.path.join(root, relpath) for relpath in relpaths]
+        root = "/home/sangyunlee/datasets/CelebAMask-HQ/CelebAMask-HQ/256/test"
+        # with open("data/celebahqvalidation.txt", "r") as f:
+        #     relpaths = f.read().splitlines()
+        # paths = [os.path.join(root, relpath) for relpath in relpaths]
+        paths = glob.glob(os.path.join(root, "*.jpg")) + glob.glob(os.path.join(root, "*.png"))
         self.data = NumpyPaths(paths=paths, size=size, random_crop=False)
         self.keys = keys
 
@@ -84,7 +89,46 @@ class CelebAHQMask(Dataset):
         return {'image': img, 'seg': seg}
     def __len__(self):
         return len(self.im_names)
-        
+class CelebAHQImg(Dataset):
+    def __init__(self, size, im_dir):
+        super().__init__()
+        self.size = size
+        self.im_dir = im_dir
+        self.im_names  = glob.glob(os.path.join(im_dir, "*.jpg")) + glob.glob(os.path.join(im_dir, "*.png"))
+
+    def __getitem__(self, i):
+        im_name = self.im_names[i]
+        img = Image.open(os.path.join(self.im_dir, im_name))
+        img = img.resize((self.size, self.size), Image.BILINEAR)
+        img = np.array(img)
+        img = img / 127.5 - 1.0
+        return {'image': img}
+    def __len__(self):
+        return len(self.im_names)
+
+class CelebAHQwithVAE(Dataset):
+    def __init__(self, size, im_dir, recon_dir):
+        super().__init__()
+        self.size = size
+        self.im_dir = im_dir
+        self.recon_dir = recon_dir
+        self.im_names  = glob.glob(os.path.join(im_dir, "*.jpg")) + glob.glob(os.path.join(im_dir, "*.png"))
+
+    def __getitem__(self, i):
+        im_name = self.im_names[i].split('/')[-1]
+        img = Image.open(os.path.join(self.im_dir, im_name))
+        img = img.resize((self.size, self.size), Image.BILINEAR)
+        img = np.array(img)
+        img = img / 127.5 - 1.0
+
+        recon = Image.open(os.path.join(self.recon_dir, im_name))
+        recon = recon.resize((self.size//4, self.size//4), Image.BILINEAR)
+        recon = np.array(recon)
+        recon = recon / 127.5 - 1.0
+        return {'image': img, 'LR_image': recon}
+    def __len__(self):
+        return len(self.im_names)
+ 
 
 class FFHQTrain(FacesBase):
     def __init__(self, size, keys=None):
